@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Media Feed Search Sheet</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body { background-color: #fff; color: #000; font-family: 'Inter', sans-serif; }
+        header { position: sticky; top: 0; z-index: 40; background: #fff; border-bottom: 1px solid #000; padding: 15px 0; }
+        .header-icons { display: flex; justify-content: space-around; width: 100%; }
+        
+        .active-tab { color: #ff0000; transform: scale(1.1); transition: all 0.2s; }
+        
+        /* Bottom Sheet chung cho Video và Tìm kiếm */
+        .bottom-sheet { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100; display: none; align-items: flex-end; }
+        .sheet-content { 
+            width: 100%; height: 85%; background: #fff; border-radius: 5px 10px 0 0; 
+            transform: translateY(100%); transition: transform 0.4s ease; display: flex; flex-direction: column; 
+        }
+        .bottom-sheet.active .sheet-content { transform: translateY(0); }
+
+        .search-input { width: 100%; padding: 12px 20px; border: 2px solid #000; border-radius: 10px; outline: none; margin-bottom: 20px; font-weight: bold; }
+        .post-card { border-bottom: 4px solid #f4f4f4; padding: 20px 15px; }
+        .thumb-wrap { position: relative; border: 1px solid #000; cursor: pointer;
+        border-radius: 5px; overflow: hidden; }
+        .badge-new { position: absolute; top: 10px; left: 10px; background: #000; color: #fff; padding: 2px 8px; font-size: 10px; font-weight: bold; }
+        .btn-black { background: #000; color: #fff; width: 100%; padding: 12px; font-weight: bold; margin-top: 10px; border-radius: 5px;}
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-icons">
+            <button id="nav-video" onclick="changeTab('video')"><i data-lucide="video"></i></button>
+            <button id="nav-image" onclick="changeTab('image')"><i data-lucide="image"></i></button>
+            <button id="nav-search" onclick="openSearch()"><i data-lucide="search"></i></button>
+            <button onclick="window.close()"><i data-lucide="log-out"></i></button>
+        </div>
+    </header>
+
+    <main id="app" class="max-w-2xl mx-auto"></main>
+
+    <div id="searchSheet" class="bottom-sheet" onclick="closeSearch()">
+        <div class="sheet-content" onclick="event.stopPropagation()">
+            <div class="w-10 h-1 bg-gray-300 rounded mx-auto mt-3"></div>
+            <div class="p-4 flex justify-between items-center">
+                <span class="font-black uppercase tracking-widest">Tìm Kiếm</span>
+                <button onclick="closeSearch()" class="text-xl">✕</button>
+            </div>
+            <div class="p-4 flex-1 overflow-y-auto">
+                <input type="text" id="searchInput" class="search-input" placeholder="Nhập tên phim cần tìm..." oninput="doSearch()">
+                <div id="searchResults">
+                    </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="videoSheet" class="bottom-sheet" onclick="closeVideo()">
+        <div class="sheet-content" onclick="event.stopPropagation()">
+            <div class="w-10 h-1 bg-gray-300 rounded mx-auto mt-3"></div>
+            <div class="p-4 border-b flex justify-between">
+                <span class="font-bold uppercase text-xs tracking-widest">Đang xem</span>
+                <button onclick="closeVideo()" class="text-xl">✕</button>
+            </div>
+            <div class="flex-1 overflow-y-auto">
+                <video id="mainPlayer" controls autoplay class="w-full bg-black aspect-video"></video>
+                <div class="p-6">
+                    <h2 id="modalTitle" class="text-2xl font-black mb-2"></h2>
+                    <p id="modalInfo" class="text-xs text-gray-500 font-medium"></p>
+                    <button class="btn-black mt-8" onclick="closeVideo()">QUAY LẠI</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const DB_URL = "https://rip8-e7d34-default-rtdb.asia-southeast1.firebasedatabase.app/media_posts.json";
+        let rawData = [];
+        let currentFilter = 'video';
+
+        async function initApp() {
+            const res = await fetch(DB_URL);
+            const data = await res.json();
+            if (data) {
+                rawData = Object.keys(data).map(id => ({ id, ...data[id] }));
+                renderFeed();
+            }
+            lucide.createIcons();
+        }
+
+        function changeTab(type) {
+            currentFilter = type;
+            renderFeed();
+        }
+
+        function renderFeed() {
+            const container = document.getElementById('app');
+            const viewedIds = JSON.parse(localStorage.getItem('watched_list')) || [];
+            
+            // Cập nhật màu nút Active
+            document.getElementById('nav-video').className = currentFilter === 'video' ? 'active-tab' : '';
+            document.getElementById('nav-image').className = currentFilter === 'image' ? 'active-tab' : '';
+            document.getElementById('nav-search').className = ''; 
+
+            let filtered = rawData.filter(item => item.type === currentFilter);
+            let processed = filtered.map(item => ({ ...item, currentIsNew: item.isNew && !viewedIds.includes(item.id) }));
+            const finalPicks = [
+                ...processed.filter(i => i.currentIsNew).sort(() => Math.random() - 0.5),
+                ...processed.filter(i => !i.currentIsNew).sort(() => Math.random() - 0.5)
+            ];
+
+            container.innerHTML = finalPicks.map(item => createCardHTML(item)).join('');
+            lucide.createIcons();
+            observePosts();
+        }
+
+        // Tạo giao diện Card dùng chung cho cả Feed và Search
+        function createCardHTML(item) {
+    return `
+        <div class="post-card" data-id="${item.id}"> <div class="thumb-wrap">
+                ${item.currentIsNew ? '<div class="badge-new">NEW</div>' : ''}
+                <img src="${item.thumbnail || item.url}" class="w-full h-auto block">
+            </div>
+            ${item.title ? `<h3 class="mt-4 font-extrabold text-xl leading-tight">${item.title}</h3>` : ''}
+            ${item.type === 'video' ? `
+                <p class="text-[10px] text-gray-400 mt-1 uppercase">Cre: ${item.cre || 'Admin'}</p>
+                <button class="btn-black mt-4" onclick="openVideo('${item.url}', '${item.title}', '${item.id}', '${item.timestamp}', '${item.cre}')">xem</button>
+            ` : ''}
+        </div>`;
+}
+
+        // LOGIC TÌM KIẾM
+        function openSearch() {
+            const sheet = document.getElementById('searchSheet');
+            document.getElementById('nav-search').className = 'active-tab';
+            sheet.style.display = 'flex';
+            setTimeout(() => sheet.classList.add('active'), 10);
+            window.history.pushState({search: true}, "");
+            doSearch();
+        }
+
+        function doSearch() {
+            const val = document.getElementById('searchInput').value.toLowerCase();
+            const resultsDiv = document.getElementById('searchResults');
+            const viewedIds = JSON.parse(localStorage.getItem('watched_list')) || [];
+
+            // Tìm kiếm trong toàn bộ data (cả phim và ảnh liên quan)
+            let filtered = rawData.filter(item => item.title.toLowerCase().includes(val));
+            
+            resultsDiv.innerHTML = filtered.map(item => {
+                const itemProcessed = { ...item, currentIsNew: item.isNew && !viewedIds.includes(item.id) };
+                return createCardHTML(itemProcessed);
+            }).join('');
+        }
+
+        function closeSearch() {
+            const sheet = document.getElementById('searchSheet');
+            sheet.classList.remove('active');
+            setTimeout(() => { sheet.style.display = 'none'; renderFeed(); }, 400);
+        }
+
+        // LOGIC VIDEO
+        function openVideo(url, title, id, time, cre) {
+            const sheet = document.getElementById('videoSheet');
+            document.getElementById('mainPlayer').src = url;
+            document.getElementById('modalTitle').innerText = title;
+            document.getElementById('modalInfo').innerText = `Cre: ${cre || 'Admin'} • ${new Date(parseInt(time)).toLocaleDateString('vi-VN')}`;
+            sheet.style.display = 'flex';
+            setTimeout(() => sheet.classList.add('active'), 10);
+            markAsWatched(id);
+        }
+
+        function closeVideo() {
+            const sheet = document.getElementById('videoSheet');
+            sheet.classList.remove('active');
+            document.getElementById('mainPlayer').pause();
+            setTimeout(() => { sheet.style.display = 'none'; renderFeed(); }, 400);
+        }
+
+        function markAsWatched(id) {
+            let watched = JSON.parse(localStorage.getItem('watched_list')) || [];
+            if (!watched.includes(id)) {
+                watched.push(id);
+                localStorage.setItem('watched_list', JSON.stringify(watched));
+            }
+        }
+
+        function handleImageClick(id) { markAsWatched(id); renderFeed(); }
+
+        window.onpopstate = () => { closeSearch(); closeVideo(); };
+        initApp();
+        
+      // Bộ tự động đánh dấu đã xem khi cuộn tới
+const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+        // Nếu tấm ảnh hiện ra trên màn hình (đủ 100%)
+        if (entry.isIntersecting) {
+            const id = entry.target.getAttribute('data-id');
+            
+            // Chờ 1 giây (1000ms) để chắc chắn người dùng đang nhìn ảnh chứ không phải lướt quá nhanh
+            setTimeout(() => {
+                // Kiểm tra lại nếu sau 1 giây nó vẫn còn trên màn hình
+                if (entry.isIntersecting) {
+                    markAsWatched(id);
+                    // Lưu ý: Không render lại ngay lập tức để tránh giật trang khi đang cuộn
+                    // Nhãn NEW sẽ mất và vị trí sẽ đổi khi người dùng chuyển Tab hoặc Load lại
+                }
+            }, 1000); 
+        }
+    });
+}, { threshold: 1.0 }); // threshold: 1.0 nghĩa là phải hiện ra toàn bộ tấm ảnh
+
+// Hàm này để kích hoạt bộ theo dõi sau khi render xong danh sách
+function observePosts() {
+    const posts = document.querySelectorAll('.post-card');
+    posts.forEach(post => observer.observe(post));
+}
+
+    </script>
+</body>
+</html>
